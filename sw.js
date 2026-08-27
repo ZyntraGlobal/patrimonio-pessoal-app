@@ -1,5 +1,5 @@
 // Incrementar versão aqui para forçar atualização no iPhone
-const CACHE = 'pp-v11';
+const CACHE = 'pp-v12';
 // Caminhos relativos (sem barra inicial) — funciona tanto servido na raiz
 // (Mac local, porta 8003) quanto sob um subcaminho (GitHub Pages).
 const ASSETS = ['assets/logo.png', 'assets/icon-192.png', 'manifest.json'];
@@ -56,7 +56,8 @@ self.addEventListener('fetch', e => {
 // mesmo com o app fechado. Publica através do relay (Cloudflare Worker) em vez
 // de escrever direto no GitHub — o token de escrita fica só no relay, nunca aqui
 // no código que o navegador baixa.
-const VAPID_PUBLIC_SW = 'BMSTghVnCWVpM3pV7_WxgQJOJBpAFe3rDQgUSDIcIPoGvEJQ6yynu4TXzgtL6hHJD0Ip9oFkqoBdIWAOSR4c3Xg';
+// Mesma chave VAPID que o relay usa pros outros apps (ele só guarda um par).
+const VAPID_PUBLIC_SW = 'BITLfwTQwUU_BYIbbdEXYoUAEp7sy6iiL52Cn-GmnuljgI4F0cPgiT5xgjSM-uV33AIP9LvWf3QrsLR1CRvE-FQ';
 const PUSH_RELAY_URL = 'https://zyntra-push-relay.nameless-bonus-004f.workers.dev/subscribe';
 
 // O Service Worker não tem localStorage — a página manda o token por

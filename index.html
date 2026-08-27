@@ -3620,7 +3620,11 @@ function urlBase64ToUint8Array(base64String) {
   return Uint8Array.from([...raw].map(c => c.charCodeAt(0)));
 }
 
-const VAPID_PUBLIC_PP = 'BMSTghVnCWVpM3pV7_WxgQJOJBpAFe3rDQgUSDIcIPoGvEJQ6yynu4TXzgtL6hHJD0Ip9oFkqoBdIWAOSR4c3Xg';
+// Mesma chave VAPID usada pelo relay pros outros apps — o relay guarda só um
+// par de chaves (público/privado) e usa pra todos, então o cliente precisa
+// pedir a subscription com essa mesma chave pública, senão o envio falha
+// com "VapidPkHashMismatch" (a chave antiga do Patrimônio era diferente).
+const VAPID_PUBLIC_PP = 'BITLfwTQwUU_BYIbbdEXYoUAEp7sy6iiL52Cn-GmnuljgI4F0cPgiT5xgjSM-uV33AIP9LvWf3QrsLR1CRvE-FQ';
 
 // O Service Worker não tem localStorage — manda o token de sessão por
 // postMessage sempre que temos um, pra ele conseguir se autocorrigir sozinho.
