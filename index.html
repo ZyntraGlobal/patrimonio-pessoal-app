@@ -816,6 +816,21 @@ canvas { display: block; }
 </div>
 
 <!-- Modal: Atualizar Saldo -->
+<div class="overlay" id="modal-confirm">
+  <div class="modal" style="max-width:360px">
+    <div class="modal-header">
+      <h3>Confirmar</h3>
+      <button class="modal-close" onclick="fecharModal('modal-confirm')">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="modal-confirm-msg" style="color:var(--text);font-size:14px"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="fecharModal('modal-confirm')">Cancelar</button>
+      <button class="btn btn-danger" onclick="_confirmarAcaoOk()">Excluir</button>
+    </div>
+  </div>
+</div>
 <div class="overlay" id="modal-saldo">
   <div class="modal" style="max-width:380px">
     <div class="modal-header">
@@ -2244,10 +2259,11 @@ function confirmarSaldo() {
 }
 
 function excluirConta(id) {
-  if (!confirm('Excluir esta conta?')) return;
+  confirmarAcao('Excluir esta conta?', () => {
   DB.contas = DB.contas.filter(c => c.id !== id);
   salvar(); renderizarContas(); atualizarSidebar();
   toast('Conta removida', 'success');
+  });
 }
 
 // ============================================================
@@ -2596,22 +2612,24 @@ function confirmarAporte() {
 }
 
 function excluirAporte(investId, aporteId) {
-  if (!confirm('Remover este registro?')) return;
-  const inv = DB.investimentos.find(x => x.id === investId);
-  if (inv) {
-    inv.aportes = inv.aportes.filter(a => a.id !== aporteId);
-    salvar(); renderizarInvestimentos(); atualizarSidebar();
-    fecharModal('modal-invest-det');
-    abrirDetalhe(investId);
-    toast('Registro removido', 'success');
-  }
+  confirmarAcao('Remover este registro?', () => {
+    const inv = DB.investimentos.find(x => x.id === investId);
+    if (inv) {
+      inv.aportes = inv.aportes.filter(a => a.id !== aporteId);
+      salvar(); renderizarInvestimentos(); atualizarSidebar();
+      fecharModal('modal-invest-det');
+      abrirDetalhe(investId);
+      toast('Registro removido', 'success');
+    }
+  });
 }
 
 function excluirInvest(id) {
-  if (!confirm('Excluir este investimento?')) return;
+  confirmarAcao('Excluir este investimento?', () => {
   DB.investimentos = DB.investimentos.filter(i => i.id !== id);
   salvar(); renderizarInvestimentos(); atualizarSidebar();
   toast('Investimento removido', 'success');
+  });
 }
 
 // ============================================================
@@ -2835,10 +2853,11 @@ function confirmarAtualizarPat() {
 }
 
 function excluirPat(id) {
-  if (!confirm('Excluir este bem?')) return;
+  confirmarAcao('Excluir este bem?', () => {
   DB.patrimonioFisico = DB.patrimonioFisico.filter(p => p.id !== id);
   salvar(); renderizarPatrimonio(); atualizarSidebar();
   toast('Bem removido', 'success');
+  });
 }
 
 // ============================================================
@@ -2947,13 +2966,13 @@ function importarJSON(input) {
   reader.onload = e => {
     try {
       const dados = JSON.parse(e.target.result);
-      if (confirm('Importar dados? Isso substituirá todos os dados atuais.')) {
+      confirmarAcao('Importar dados? Isso substituirá todos os dados atuais.', () => {
         DB = Object.assign(JSON.parse(JSON.stringify(DB_PADRAO)), dados);
         salvar();
         renderizarPagina('config');
         atualizarSidebar();
         toast('Dados importados com sucesso!', 'success');
-      }
+      });
     } catch { toast('Arquivo inválido', 'error'); }
   };
   reader.readAsText(file);
@@ -3102,10 +3121,11 @@ function confirmarAtualizarEsp() {
 }
 
 function excluirEspecie(id) {
-  if (!confirm('Excluir este registro?')) return;
+  confirmarAcao('Excluir este registro?', () => {
   DB.especieDinheiro = (DB.especieDinheiro||[]).filter(e => e.id !== id);
   salvar(); renderizarEspecie(); atualizarSidebar();
   toast('Removido', 'success');
+  });
 }
 
 // ============================================================
@@ -3340,10 +3360,11 @@ function marcarPago(id) {
 }
 
 function excluirCP(id) {
-  if (!confirm('Excluir esta conta?')) return;
+  confirmarAcao('Excluir esta conta?', () => {
   DB.contasPagar = (DB.contasPagar||[]).filter(c => c.id !== id);
   salvar(); renderizarContasPagar();
   toast('Removido', 'success');
+  });
 }
 
 // ============================================================
@@ -3498,10 +3519,11 @@ function marcarComprado(id) {
 }
 
 function excluirCompra(id) {
-  if (!confirm('Excluir este item?')) return;
+  confirmarAcao('Excluir este item?', () => {
   DB.comprasFazer = (DB.comprasFazer||[]).filter(c => c.id !== id);
   salvar(); renderizarComprasFazer();
   toast('Removido', 'success');
+  });
 }
 
 // ============================================================
@@ -3509,6 +3531,21 @@ function excluirCompra(id) {
 // ============================================================
 function abrirModal(id) { document.getElementById(id).classList.add('open'); }
 function fecharModal(id) { document.getElementById(id).classList.remove('open'); }
+
+// window.confirm() não funciona de forma confiável no app instalado (PWA
+// standalone) no iOS — usa um modal próprio em vez do diálogo nativo.
+let _confirmarAcaoCb = null;
+function confirmarAcao(mensagem, cb) {
+  _confirmarAcaoCb = cb;
+  document.getElementById('modal-confirm-msg').textContent = mensagem;
+  abrirModal('modal-confirm');
+}
+function _confirmarAcaoOk() {
+  const cb = _confirmarAcaoCb;
+  _confirmarAcaoCb = null;
+  fecharModal('modal-confirm');
+  if (cb) cb();
+}
 
 document.querySelectorAll('.overlay').forEach(el => {
   el.addEventListener('click', e => { if (e.target === el) fecharModal(el.id); });
