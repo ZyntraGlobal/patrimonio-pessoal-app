@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
 <title>Patrimônio Pessoal</title>
-<link rel="manifest" href="/patrimonio-pessoal-app/manifest.json">
-<link rel="apple-touch-icon" href="/patrimonio-pessoal-app/assets/icon-180.png">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="assets/icon-180.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Patrimônio">
@@ -1301,28 +1301,43 @@ function tipoBadge(tipo) {
 }
 
 // ============================================================
-// PERSISTÊNCIA — GitHub API (repo privado patrimonio-dados, sem servidor)
+// PERSISTÊNCIA — via relay (Cloudflare Worker), sem token no cliente
 // ============================================================
 const _isWeb = () => !window.api;
 
-// Token de grão fino, restrito só ao repo patrimonio-dados (Contents: read/write) —
-// seguro pra ficar em código público, ao contrário do token de acesso total do Zyntra.
-const GH_TOKEN_PP = 'github_pat_11CFLNNEQ0' + '1PYxMxCwYRmo_Kh4C4gp6bHSBv9IjyQXMunOfcCGZF4Y3d625gnYyOZa74ZQJG2OsVjq2Ny0';
-const GH_DADOS_API = 'https://api.github.com/repos/ZyntraGlobal/patrimonio-dados/contents/dados.json';
-const GH_HEADERS_PP = { 'Authorization': 'Bearer ' + GH_TOKEN_PP, 'Accept': 'application/vnd.github+json', 'User-Agent': 'PatrimonioPessoal-App' };
+// Leitura e escrita passam pelo mesmo relay já usado pelo Zyntra FC/Gestão —
+// o navegador nunca fala direto com o GitHub, nem guarda nenhum token de
+// escrita. O relay decide, pela sessão, quem pode ler/gravar o quê.
+const PP_RELAY_URL = 'https://zyntra-push-relay.nameless-bonus-004f.workers.dev';
+
+function _sessaoPP() {
+  try { return JSON.parse(localStorage.getItem('pp_sess') || '{}'); } catch(e) { return {}; }
+}
 
 async function _ghGet() {
   try {
+    const tok = _sessaoPP().token;
+    if (!tok) return null;
     const ctrl = new AbortController();
     const t = setTimeout(() => ctrl.abort(), 8000);
-    const r = await fetch(GH_DADOS_API, { headers: GH_HEADERS_PP, cache: 'no-store', signal: ctrl.signal });
+    const r = await fetch(PP_RELAY_URL + '/data?app=patrimonio', {
+      headers: { 'Authorization': 'Bearer ' + tok },
+      signal: ctrl.signal
+    });
     clearTimeout(t);
+    if (r.status === 401) { _expirarSessaoPP(); return null; }
     if (!r.ok) return null;
-    const info = await r.json();
-    if (!info.content) return null;
-    const bytes = Uint8Array.from(atob(info.content.replace(/\n/g, '')), c => c.charCodeAt(0));
-    return JSON.parse(new TextDecoder().decode(bytes));
+    const body = await r.json();
+    return body && body.data ? body.data : null;
   } catch(e) { return null; }
+}
+
+function _expirarSessaoPP() {
+  localStorage.removeItem('pp_sess');
+  // A tela de login já foi removida do DOM no login — o jeito simples de
+  // trazê-la de volta é recarregar (verificarLogin() mostra ela de novo,
+  // já que não tem mais sessão salva).
+  window.location.reload();
 }
 
 function _gerarMsgPush() {
@@ -1349,21 +1364,20 @@ function _gerarMsgPush() {
   }
 }
 
-// Escreve dados.json no GitHub — busca o sha atual primeiro (exigência da Contents API)
+// Envia os dados através do relay — o retry em caso de conflito de SHA
+// (dois aparelhos salvando ao mesmo tempo) acontece do lado do servidor.
 async function _ghPush(db) {
   try {
-    const conteudo = JSON.stringify(db, null, 2);
-    const b64 = btoa(unescape(encodeURIComponent(conteudo)));
-    const rGet = await fetch(GH_DADOS_API, { headers: GH_HEADERS_PP, cache: 'no-store' });
-    const info = rGet.status === 404 ? null : await rGet.json();
-    const payload = { message: 'update dados', content: b64 };
-    if (info && info.sha) payload.sha = info.sha;
-    await fetch(GH_DADOS_API, {
-      method: 'PUT',
-      headers: Object.assign({ 'Content-Type': 'application/json' }, GH_HEADERS_PP),
-      cache: 'no-store',
-      body: JSON.stringify(payload)
+    const tok = _sessaoPP().token;
+    if (!tok) return;
+    const resp = await fetch(PP_RELAY_URL + '/save-data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok },
+      body: JSON.stringify({ app: 'patrimonio', data: db, resumo: { titulo: 'Patrimônio Pessoal — atualizado', corpo: _gerarMsgPush() } })
     });
+    if (resp.status === 401) { _expirarSessaoPP(); return; }
+    const j = await resp.json().catch(() => ({}));
+    if (j && j._savedAt) db._savedAt = j._savedAt;
   } catch(e) {}
 }
 
@@ -3567,11 +3581,29 @@ function popularDadosIniciais() {
 async function registrarSW() {
   if (!('serviceWorker' in navigator)) return;
   try {
-    await navigator.serviceWorker.register('/patrimonio-pessoal-app/sw.js', { scope: '/patrimonio-pessoal-app/' });
+    const reg = await navigator.serviceWorker.register('sw.js');
+    reg.update(); // força verificação imediata de nova versão
   } catch(e) {}
 }
 
+// Auto-reload quando SW atualizar — sem forçar reload com sessão ativa (ver
+// mesma correção feita no Zyntra FC/Gestão: reload no meio do uso derruba
+// login e no PWA instalado do iOS pode até tirar do modo app).
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('message', function(e) {
+    if (e.data && e.data.type === 'SW_UPDATED') {
+      var tela = document.getElementById('login-screen');
+      if (tela) { window.location.reload(); }
+      else { window._ppAtualizacaoPendente = true; }
+    }
+    if (e.data && e.data.type === 'REFRESH_NOW') {
+      try { if (typeof _verificarSync === 'function') _verificarSync(); } catch(e) {}
+    }
+  });
+}
+
 async function pedirPermissaoNotificacao() {
+  _avisarTokenSW();
   if (!('Notification' in window)) return;
   if (Notification.permission === 'default') {
     await Notification.requestPermission();
@@ -3589,34 +3621,32 @@ function urlBase64ToUint8Array(base64String) {
 }
 
 const VAPID_PUBLIC_PP = 'BMSTghVnCWVpM3pV7_WxgQJOJBpAFe3rDQgUSDIcIPoGvEJQ6yynu4TXzgtL6hHJD0Ip9oFkqoBdIWAOSR4c3Xg';
-const GH_PUSHSUB_API_PP = 'https://api.github.com/repos/ZyntraGlobal/patrimonio-dados/contents/push-sub.json';
 
-// Publica a subscription no push-sub.json do repo privado — com retry e reforço
-// diário (autocorreção caso um PUT falhe silenciosamente ou o arquivo dessincronize).
+// O Service Worker não tem localStorage — manda o token de sessão por
+// postMessage sempre que temos um, pra ele conseguir se autocorrigir sozinho.
+function _avisarTokenSW() {
+  const tok = _sessaoPP().token;
+  if (tok && navigator.serviceWorker && navigator.serviceWorker.controller) {
+    navigator.serviceWorker.controller.postMessage({ type: 'SESSION_TOKEN', token: tok });
+  }
+}
+
+// Publica a subscription através do relay (Cloudflare Worker) — com retry e
+// reforço diário (autocorreção caso um envio falhe silenciosamente).
 async function _salvarSubGitHubPP(sub, forcar) {
   try {
     const mudou = localStorage.getItem('pp_push_ep') !== sub.endpoint;
     const ultimaPub = Number(localStorage.getItem('pp_push_pub_ts') || 0);
     if (!mudou && !forcar && (Date.now() - ultimaPub) < 86400000) return;
-    const rGet = await fetch(GH_PUSHSUB_API_PP, { headers: GH_HEADERS_PP, cache: 'no-store' });
-    const info = rGet.status === 404 ? null : await rGet.json();
-    let lista = [];
-    if (info && info.content) {
-      try { lista = JSON.parse(decodeURIComponent(escape(atob(info.content.replace(/\n/g, ''))))); } catch(e) { lista = []; }
-    }
-    if (!Array.isArray(lista)) lista = [];
-    lista = lista.filter(s => s.endpoint !== sub.endpoint);
-    lista.push(sub);
-    const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(lista))));
-    const payload = { message: 'update push subscription', content: b64 };
-    if (info && info.sha) payload.sha = info.sha;
-    const rPut = await fetch(GH_PUSHSUB_API_PP, {
-      method: 'PUT',
-      headers: Object.assign({ 'Content-Type': 'application/json' }, GH_HEADERS_PP),
-      cache: 'no-store',
-      body: JSON.stringify(payload)
+    const tok = _sessaoPP().token;
+    if (!tok) return;
+    const subJson = sub.toJSON ? sub.toJSON() : sub;
+    const r = await fetch(PP_RELAY_URL + '/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + tok },
+      body: JSON.stringify({ app: 'patrimonio', subscription: { endpoint: subJson.endpoint, keys: subJson.keys } })
     });
-    if (rPut.ok) {
+    if (r.ok) {
       localStorage.setItem('pp_push_ep', sub.endpoint);
       localStorage.setItem('pp_push_pub_ts', String(Date.now()));
     } else {
@@ -3655,7 +3685,7 @@ function verificarNotificacoesContas() {
     const texto = diff < 0 ? `Atrasada há ${Math.abs(diff)} dia(s)!` : diff === 0 ? 'Vence HOJE!' : `Vence em ${diff} dia(s)`;
     new Notification(`💰 ${c.descricao}`, {
       body: `${texto} — ${c.valor ? 'R$ ' + c.valor.toFixed(2) : 'valor a confirmar'}`,
-      icon: '/patrimonio-pessoal-app/assets/icon-192.png',
+      icon: '/assets/icon-192.png',
       tag: c.id
     });
   });
@@ -3665,38 +3695,53 @@ async function tentarLogin() {
   const user = document.getElementById('login-user').value.trim().toLowerCase();
   const pass = document.getElementById('login-pass').value;
   const card = document.getElementById('login-card');
-  document.getElementById('login-erro').textContent = '';
-  if (user === 'felipe' && pass === 'zyntra2026') {
-    sessionStorage.setItem('pp_auth', '1');
-    sessionStorage.setItem('pp_token', btoa(user + ':' + pass));
-    const screen = document.getElementById('login-screen');
-    screen.style.animation = 'loginOut 0.4s ease forwards';
-    setTimeout(() => screen.remove(), 400);
-    if (!window.api) {
-      await carregar();
-      popularDadosIniciais();
-      verificarSnapshotMensal();
-      await salvar();
-      ir('dashboard');
-      await pedirPermissaoNotificacao();
-      setTimeout(verificarNotificacoesContas, 2000);
+  const erroEl = document.getElementById('login-erro');
+  erroEl.textContent = '';
+  if (!user || !pass) { erroEl.textContent = 'Preencha usuário e senha.'; return; }
+  try {
+    // Login validado no relay — o servidor lê o dados.json privado (com o
+    // hash da senha), confere, e devolve um token de sessão. O navegador
+    // nunca mais guarda nem confere senha sozinho.
+    const resp = await fetch(PP_RELAY_URL + '/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ app: 'patrimonio', user, pass })
+    });
+    const res = await resp.json().catch(() => ({}));
+    if (resp.ok && res.ok) {
+      localStorage.setItem('pp_sess', JSON.stringify({ user, token: res.token, until: Date.now() + 4 * 60 * 60 * 1000 }));
+      const screen = document.getElementById('login-screen');
+      screen.style.animation = 'loginOut 0.4s ease forwards';
+      setTimeout(() => screen.remove(), 400);
+      if (!window.api) {
+        await carregar();
+        popularDadosIniciais();
+        verificarSnapshotMensal();
+        await salvar();
+        ir('dashboard');
+        await pedirPermissaoNotificacao();
+        setTimeout(verificarNotificacoesContas, 2000);
+      }
+    } else {
+      card.classList.remove('shake');
+      void card.offsetWidth;
+      card.classList.add('shake');
+      erroEl.textContent = 'Usuário ou senha incorretos.';
+      document.getElementById('login-pass').value = '';
+      document.getElementById('login-pass').focus();
     }
-  } else {
-    card.classList.remove('shake');
-    void card.offsetWidth;
-    card.classList.add('shake');
-    document.getElementById('login-erro').textContent = 'Usuário ou senha incorretos.';
-    document.getElementById('login-pass').value = '';
-    document.getElementById('login-pass').focus();
+  } catch(e) {
+    erroEl.textContent = 'Erro ao processar login. Verifique sua conexão e tente novamente.';
   }
 }
 
 function verificarLogin() {
-  if (sessionStorage.getItem('pp_auth') === '1') {
+  const sess = _sessaoPP();
+  if (sess && sess.token && sess.until && Date.now() < sess.until) {
     const s = document.getElementById('login-screen');
     if (s) s.remove();
     return true;
   }
+  localStorage.removeItem('pp_sess');
   setTimeout(() => { const el = document.getElementById('login-user'); if (el) el.focus(); }, 300);
   return false;
 }

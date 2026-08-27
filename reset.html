@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Patrimônio Pessoal — Reset</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0c0c0c;color:#f5f5f5;font-family:'Inter',sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;flex-direction:column;gap:16px;text-align:center;padding:24px}
+  .ico{font-size:60px;animation:pulse 1.5s ease-in-out infinite}
+  @keyframes pulse{0%,100%{transform:scale(1)}50%{transform:scale(1.1)}}
+  .msg{font-size:20px;font-weight:700;margin-top:8px}
+  .sub{font-size:13px;color:#999;max-width:300px;line-height:1.6}
+  .steps{margin-top:8px;font-size:12px;color:#555;max-width:300px;text-align:left;line-height:2}
+  .btn{margin-top:20px;padding:16px 36px;background:linear-gradient(135deg,#0A1120,#D4AF37);color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:700;cursor:pointer;text-decoration:none;display:inline-block;letter-spacing:1px}
+  .btn:disabled{opacity:.4;pointer-events:none}
+  .ok{color:#34d399}
+  .err{color:#f87171}
+</style>
+</head>
+<body>
+<div class="ico" id="ico">🔄</div>
+<div class="msg" id="msg">Limpando cache...</div>
+<div class="sub" id="sub">Removendo versão antiga e forçando atualização</div>
+<div class="steps" id="steps"></div>
+<a class="btn" id="btn" href="./" style="display:none">Abrir Patrimônio Pessoal</a>
+<script>
+(async function(){
+  var ico=document.getElementById('ico');
+  var msg=document.getElementById('msg');
+  var sub=document.getElementById('sub');
+  var steps=document.getElementById('steps');
+  var btn=document.getElementById('btn');
+  var log=function(txt,ok){
+    var line=document.createElement('div');
+    line.textContent=(ok===true?'✅ ':ok===false?'❌ ':'⏳ ')+txt;
+    if(ok===true)line.className='ok';
+    if(ok===false)line.className='err';
+    steps.appendChild(line);
+  };
+
+  try{
+    localStorage.removeItem('pp_sess');
+    localStorage.removeItem('pp_push_ep');
+    localStorage.removeItem('pp_push_pub_ts');
+    localStorage.removeItem('patrimonio-db');
+    log('localStorage limpo',true);
+  }catch(e){log('localStorage: '+e.message,false);}
+
+  try{
+    if('serviceWorker' in navigator){
+      var regs=await navigator.serviceWorker.getRegistrations();
+      for(var r of regs){await r.unregister();}
+      log('Service Worker removido ('+regs.length+')',true);
+    }else{log('Service Worker não disponível',null);}
+  }catch(e){log('SW: '+e.message,false);}
+
+  try{
+    if('caches' in window){
+      var keys=await caches.keys();
+      for(var k of keys){await caches.delete(k);}
+      log('Cache limpo ('+keys.length+' versões)',true);
+    }else{log('Cache API não disponível',null);}
+  }catch(e){log('Cache: '+e.message,false);}
+
+  ico.textContent='✅';
+  ico.style.animation='none';
+  msg.textContent='Pronto! App atualizado.';
+  sub.textContent='Toque no botão abaixo para abrir o sistema com a versão mais recente.';
+  btn.style.display='inline-block';
+})();
+</script>
+</body>
+</html>

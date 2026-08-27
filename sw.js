@@ -1,6 +1,8 @@
 // Incrementar versão aqui para forçar atualização no iPhone
-const CACHE = 'pp-v10';
-const ASSETS = ['/patrimonio-pessoal-app/assets/logo.png', '/patrimonio-pessoal-app/assets/icon-192.png', '/patrimonio-pessoal-app/manifest.json'];
+const CACHE = 'pp-v11';
+// Caminhos relativos (sem barra inicial) — funciona tanto servido na raiz
+// (Mac local, porta 8003) quanto sob um subcaminho (GitHub Pages).
+const ASSETS = ['assets/logo.png', 'assets/icon-192.png', 'manifest.json'];
 
 self.addEventListener('install', e => {
   e.waitUntil(
@@ -16,29 +18,29 @@ self.addEventListener('activate', e => {
     caches.keys().then(keys =>
       Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
     ).then(() => clients.claim())
+     .then(() => self.clients.matchAll({ type: 'window', includeUncontrolled: true }))
+     .then(cls => cls.forEach(c => c.postMessage({ type: 'SW_UPDATED', cache: CACHE })))
   );
 });
 
 self.addEventListener('fetch', e => {
-  const url = new URL(e.request.url);
+  const url = e.request.url;
 
-  // GitHub API: nunca intercepta — passa direto
-  if (url.hostname === 'api.github.com') return;
+  // Relay (dados reais/login/notificação): nunca intercepta nem cacheia —
+  // sempre direto da rede, senão a resposta de /data fica presa em cache.
+  if (url.includes('zyntra-push-relay') || url.includes('api.github.com')) return;
 
-  // HTML: network-first
-  if (e.request.mode === 'navigate' || url.pathname.endsWith('.html')) {
+  // index.html: sempre da rede — nunca do cache
+  if (e.request.mode === 'navigate' || url.endsWith('/') || url.includes('/index.html')) {
     e.respondWith(
-      fetch(e.request)
-        .then(res => {
-          caches.open(CACHE).then(c => c.put(e.request, res.clone()));
-          return res;
-        })
+      fetch(e.request, { cache: 'no-store' })
+        .then(res => { caches.open(CACHE).then(c => c.put(e.request, res.clone())); return res; })
         .catch(() => caches.match(e.request))
     );
     return;
   }
 
-  // Assets: cache-first, com fallback à rede
+  // Demais assets: cache-first, com fallback à rede
   e.respondWith(
     caches.match(e.request).then(r => {
       if (r) return r;
@@ -51,12 +53,19 @@ self.addEventListener('fetch', e => {
 });
 
 // ── Autocorreção de subscription — roda dentro do Service Worker, então funciona
-// mesmo com o app fechado (sem depender do app reaberto em primeiro plano pra
-// detectar/republicar uma subscription trocada ou dessincronizada).
-// Token de grão fino, restrito só ao repo patrimonio-dados (Contents: read/write)
-const GH_TOKEN_SW = 'github_pat_11CFLNNEQ0' + '1PYxMxCwYRmo_Kh4C4gp6bHSBv9IjyQXMunOfcCGZF4Y3d625gnYyOZa74ZQJG2OsVjq2Ny0';
+// mesmo com o app fechado. Publica através do relay (Cloudflare Worker) em vez
+// de escrever direto no GitHub — o token de escrita fica só no relay, nunca aqui
+// no código que o navegador baixa.
 const VAPID_PUBLIC_SW = 'BMSTghVnCWVpM3pV7_WxgQJOJBpAFe3rDQgUSDIcIPoGvEJQ6yynu4TXzgtL6hHJD0Ip9oFkqoBdIWAOSR4c3Xg';
-const PUSH_SUB_API_SW = 'https://api.github.com/repos/ZyntraGlobal/patrimonio-dados/contents/push-sub.json';
+const PUSH_RELAY_URL = 'https://zyntra-push-relay.nameless-bonus-004f.workers.dev/subscribe';
+
+// O Service Worker não tem localStorage — a página manda o token por
+// postMessage a cada login/renovação. Sem token em memória, a autocorreção
+// fica pendente até a página reabrir e mandar de novo (não crítico).
+let _sessionTokenSW = null;
+self.addEventListener('message', e => {
+  if (e.data && e.data.type === 'SESSION_TOKEN') _sessionTokenSW = e.data.token;
+});
 
 function _urlB64ToUint8SW(b) {
   const p = '='.repeat((4 - b.length % 4) % 4);
@@ -68,23 +77,13 @@ function _urlB64ToUint8SW(b) {
 }
 
 function _publicarSubGitHubSW(sub) {
-  const hh = { 'Authorization': 'Bearer ' + GH_TOKEN_SW, 'Accept': 'application/vnd.github+json', 'User-Agent': 'PatrimonioPessoal-App', 'Content-Type': 'application/json' };
-  return fetch(PUSH_SUB_API_SW, { headers: hh, cache: 'no-store' })
-    .then(r => r.status === 404 ? null : r.json())
-    .then(info => {
-      let lista = [];
-      if (info && info.content) {
-        try { lista = JSON.parse(atob(info.content.replace(/\n/g, ''))); } catch(e) { lista = []; }
-      }
-      if (!Array.isArray(lista)) lista = [];
-      lista = lista.filter(s => s.endpoint !== sub.endpoint);
-      lista.push(sub);
-      const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(lista))));
-      const payload = { message: 'update push subscription (sw)', content: b64 };
-      if (info && info.sha) payload.sha = info.sha;
-      return fetch(PUSH_SUB_API_SW, { method: 'PUT', headers: hh, cache: 'no-store', body: JSON.stringify(payload) });
-    })
-    .catch(() => {});
+  if (!_sessionTokenSW) return Promise.resolve();
+  const subJson = sub.toJSON ? sub.toJSON() : sub;
+  return fetch(PUSH_RELAY_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + _sessionTokenSW },
+    body: JSON.stringify({ app: 'patrimonio', subscription: { endpoint: subJson.endpoint, keys: subJson.keys } })
+  }).catch(() => {});
 }
 
 // O navegador trocou a subscription sozinho (ex: expirou) — reinscreve e republica
@@ -98,24 +97,36 @@ self.addEventListener('pushsubscriptionchange', e => {
 });
 
 self.addEventListener('push', e => {
-  const data = e.data ? e.data.json() : { title: 'Patrimônio Pessoal', body: 'Você tem contas a vencer!' };
+  let data = { title: 'Patrimônio Pessoal', body: 'Dados atualizados' };
+  try { if (e.data) data = e.data.json(); } catch(ex) {}
   e.waitUntil(
     Promise.all([
-      self.registration.showNotification(data.title, {
-        body: data.body,
-        icon: '/patrimonio-pessoal-app/assets/icon-192.png',
-        badge: '/patrimonio-pessoal-app/assets/icon-192.png',
+      self.registration.showNotification(data.title || 'Patrimônio Pessoal', {
+        body: data.body || 'Dados atualizados',
+        icon: 'assets/icon-192.png',
+        badge: 'assets/icon-192.png',
+        tag: 'patrimonio-' + Date.now(),
         vibrate: [200, 100, 200],
-        data: { url: '/patrimonio-pessoal-app/' }
+        renotify: true
       }),
-      // A cada push recebido, confirma que a subscription publicada no GitHub é a
-      // mesma que está ativa aqui — corrige qualquer dessincronia silenciosa.
-      self.registration.pushManager.getSubscription().then(sub => sub && _publicarSubGitHubSW(sub)).catch(() => {})
+      // A cada push recebido, confirma que a subscription publicada é a mesma
+      // que está ativa aqui — corrige qualquer dessincronia silenciosa.
+      self.registration.pushManager.getSubscription().then(sub => sub && _publicarSubGitHubSW(sub)).catch(() => {}),
+      // Avisa qualquer aba/app aberto pra sincronizar na hora.
+      self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+        .then(cls => cls.forEach(c => c.postMessage({ type: 'REFRESH_NOW' })))
     ])
   );
 });
 
 self.addEventListener('notificationclick', e => {
   e.notification.close();
-  e.waitUntil(clients.openWindow(e.notification.data.url || '/patrimonio-pessoal-app/'));
+  e.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then(cls => {
+      for (const c of cls) {
+        if (c.url.includes('/') && 'focus' in c) return c.focus();
+      }
+      return clients.openWindow('./');
+    })
+  );
 });
