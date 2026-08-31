@@ -1356,27 +1356,9 @@ function _expirarSessaoPP() {
 }
 
 function _gerarMsgPush() {
-  const secoes = {
-    'dashboard':    '📊 Dashboard',
-    'contas':       '🏦 Contas bancárias',
-    'investimentos':'📈 Investimentos',
-    'contas_pagar': '📋 Contas a pagar',
-    'compras_fazer':'🛒 Compras a fazer',
-    'fisico':       '🏠 Patrimônio físico',
-    'especie':      '💵 Espécie em dinheiro',
-    'historico':    '📅 Histórico',
-    'configuracoes':'⚙️ Configurações'
-  };
-  const pgEl = document.querySelector('.page.active');
-  const pg = pgEl ? pgEl.id.replace('page-', '') : 'dashboard';
-  const secao = secoes[pg] || '📊 Dados';
-  try {
-    const tc = totalContas(), ti = totalInvest(), tf = totalFisico();
-    const total = tc + ti + tf;
-    return `${secao} atualizado\nTotal: ${R$(total)} · Contas: ${R$(tc)} · Invest: ${R$(ti)}`;
-  } catch(e) {
-    return `${secao} atualizado no notebook`;
-  }
+  // De propósito genérica, sem detalhe do que mudou (diferente do Zyntra
+  // FC/Gestão) — só confirma que algo foi salvo, sem expor seção/valores.
+  return 'Dados atualizados com sucesso';
 }
 
 // Envia os dados através do relay — o retry em caso de conflito de SHA
